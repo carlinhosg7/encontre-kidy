@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Encontre Kidy</title>
+  <meta name="description" content="Localize lojas e representantes Kidy por Estado e Cidade e fale direto no WhatsApp." />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root{
+      --kidy-orange:#ff5100;
+      --whatsapp-green:#25D366;
+      --text:#000000;
+      --bg:white;
+    }
+    html,body{height:100%;background:var(--bg);color:var(--text)}
+    .card{background:white;border:1px solid #ffd4c0;color:var(--text)}
+    .btn{display:inline-flex;align-items:center;justify-content:center;border-radius:9999px;padding:.65rem 1rem;font-weight:700}
+    .btn-primary{background:var(--whatsapp-green);color:white}
+    .btn-primary:hover{filter:brightness(1.1)}
+    .btn-ghost{background:transparent;border:2px solid var(--text);color:var(--text)}
+    .btn-map{background:white;border:2px solid #ff5100;color:#ff5100}
+    .btn-map:hover{filter:brightness(1.05)}
+    .badge{background:var(--text);color:white;border-radius:9999px;padding:.15rem .55rem;font-weight:700;font-size:.7rem}
+    .label{font-size:.75rem; letter-spacing:.02em}
+    .muted{opacity:.9}
+  </style>
+</head>
+<body class="font-[Inter]">
+  <header class="sticky top-0 z-40 backdrop-blur bg-white border-b border-[#ff5100]/30 shadow-md">
+    <div class="max-w-6xl mx-auto px-4 py-6 flex flex-col items-center justify-center gap-3">
+      <img src="public/logo-kidy.png" alt="Logo Kidy" class="w-28 h-28 rounded-full border-4 border-[#ff5100] shadow-lg">
+      <h1 class="text-2xl md:text-3xl font-extrabold tracking-tight text-[#ff5100]">
+        Encontre <span class="text-orange">Kidy</span>
+      </h1>
+    </div>
+  </header>
+</body>
+
+
+  <main class="max-w-6xl mx-auto px-4 py-8">
+    <div class="card rounded-2xl p-4 mb-6 shadow">
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div>
+          <label class="label">Estado</label>
+          <select id="estado" class="mt-1 w-full bg-white border border-[#ff5100]/40 rounded-xl px-3 py-2 text-[#ff5100]"></select>
+        </div>
+        <div>
+          <label class="label">Cidade</label>
+          <select id="cidade" class="mt-1 w-full bg-white border border-[#ff5100]/40 rounded-xl px-3 py-2 text-[#ff5100]"></select>
+        </div>
+        <div class="flex items-end">
+          <button id="limpar" class="btn btn-ghost w-full">Limpar</button>
+        </div>
+      </div>
+      <div class="mt-4 text-sm">Resultados: <span id="count">0</span></div>
+      <div id="alerta" class="mt-2 text-xs text-amber-600 hidden"></div>
+    </div>
+
+    <section id="grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"></section>
+  </main>
+
+  <footer class="mt-12 py-6 border-t border-[#ff5100]/20 text-center text-[#ff5100] text-sm">
+    © <span id="year"></span> Kidy — Cuidando de cada passo ❤.
+  </footer>
+
+<script>
+  // =============================
+  // Config / Utilidades
+  // =============================
+  const UF_LIST = ["AC","AL","AP","AM","BA","CE","DF","ES","GO","MA","MT","MS","MG","PA","PB","PR","PE","PI","RJ","RN","RS","RO","RR","SC","SP","SE","TO"];
+  const PAGE_SIZE = 60; // paginação
+
+  const soDigitos = (s='') => (s+"").replace(/\D+/g,'');
+  const rmAcc = (s='') => (s+"").normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+  const toTitle = (s='') => (s+"").toLowerCase().replace(/(^|\s)\S/g, t=>t.toUpperCase());
+  const fmtPhoneBR = (num='')=>{
+    const d=soDigitos(num); if(d.length<10) return num||'';
+    const di = d.replace(/^55/,"");
+    const ddd = di.slice(0,2);
+    const corpo = di.length>=11? `${di.slice(2,7)}-${di.slice(7,11)}` : `${di.slice(2,6)}-${di.slice(6,10)}`;
+    return `(${ddd}) ${corpo}`;
+  };
+
+  const estadoSel = document.getElementById('estado');
+  const cidadeSel = document.getElementById('cidade');
+  const grid = document.getElementById('grid');
+  const count = document.getElementById('count');
+  const alerta = document.getElementById('alerta');
+  document.getElementById('year').textContent=new Date().getFullYear();
+
+  // =============================
+  // Estado do app
+  // =============================
+  let cacheUF = {};    // { 'SP': [{...},{...}], ... }
+  let viewData = [];   // dados filtrados para render
+  let page = 1;        // pagina atual
+
+  // =============================
+  // Normalização de linhas
+  // =============================
+  function mapFromJson(row){
+    const map = {}; Object.keys(row||{}).forEach(k=>{ map[ rmAcc(String(k)).toLowerCase().trim() ] = k; });
+    const pick = (alts, def='') => { for(const a of alts){ const key = rmAcc(a).toLowerCase(); if(map[key]!==undefined) return row[ map[key] ]; } return def; };
+
+    const estado = String(pick(['estado','uf','sigla','state'])).toUpperCase();
+    const cidade = toTitle(pick(['cidade','municipio','município','city']));
+    const loja = pick(['loja','nome','nome fantasia','representante','razao social','razão social','cliente','revenda']);
+    const endereco = pick(['endereco','endereço','logradouro','rua','numero','número','complemento','address']);
+    const bairro = pick(['bairro','distrito','setor']);
+    const numero = pick(['numero','número']);
+    const complemento = pick(['complemento','compl']);
+    const cep = pick(['cep','c.e.p']);
+    const latitude = pick(['latitude','lat']);
+    const longitude = pick(['longitude','lng','long']);
+
+    const email = pick(['email','e-mail']);
+    const tel1 = pick(['telefone','telefone1','tel1','fone','fone1']);
+    const tel2 = pick(['telefone2','tel2','fone2']);
+    const cel = pick(['celular','cel']);
+
+    let whatsapp = soDigitos(pick(['whatsapp','zap','contato whatsapp','telefone whatsapp','whats']));
+    if(!whatsapp){ const cand = soDigitos(cel||tel1||tel2||''); if(cand) whatsapp = cand; }
+    if(whatsapp){ whatsapp = whatsapp.replace(/^0+/, ''); if(!whatsapp.startsWith('55')) whatsapp = '55'+whatsapp; }
+
+    return { estado, cidade, loja, endereco, bairro, numero, complemento, cep, email, tel1, tel2, cel, latitude, longitude, whatsapp };
+  }
+
+  function mapsLink(it){
+    if(it.latitude && it.longitude){ return `https://www.google.com/maps/search/?api=1&query=${it.latitude},${it.longitude}`; }
+    const partes = [it.endereco, it.bairro, `${it.cidade}/${it.estado}`, it.cep].filter(Boolean).join(', ');
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(partes)}`;
+  }
+
+  // =============================
+  // Lazy load: só baixa dados após escolher UF
+  // =============================
+  async function loadUF(uf){
+    if(cacheUF[uf]) return cacheUF[uf];
+    // 1) tenta arquivo por UF (recomendado): data/uf/UF.json
+    try{
+      const respUF = await fetch(`data/uf/${uf}.json`, {cache:'no-store'});
+      if(respUF.ok){
+        const json = await respUF.json();
+        cacheUF[uf] = (Array.isArray(json)?json:[]).map(mapFromJson).filter(x=>x.estado===uf);
+        return cacheUF[uf];
+      }
+    }catch{ /* ignora e tenta fallback */ }
+
+    // 2) fallback: baixa o arquivo completo e filtra (pode ser pesado)
+    try{
+      alerta.textContent = 'Carregando dados...';
+      alerta.classList.remove('hidden');
+      const respAll = await fetch('data/lojas.json', {cache:'no-store'});
+      if(!respAll.ok) throw new Error('HTTP '+respAll.status);
+      const all = await respAll.json();
+      const norm = (Array.isArray(all)?all:[]).map(mapFromJson);
+      UF_LIST.forEach(u=>{ cacheUF[u] = norm.filter(x=>x.estado===u); });
+      alerta.classList.add('hidden');
+      return cacheUF[uf] || [];
+    }catch(e){
+      alerta.textContent = 'Não foi possível carregar os dados (verifique data/uf/UF.json ou data/lojas.json).';
+      alerta.classList.remove('hidden');
+      cacheUF[uf] = [];
+      return [];
+    }
+  }
+
+  // =============================
+  // UI: preenchimento inicial (só Estados)
+  // =============================
+  function initEstados(){
+    estadoSel.innerHTML = '<option value="">Selecione um Estado</option>' + UF_LIST.map(e=>`<option value="${e}">${e}</option>`).join('');
+    cidadeSel.innerHTML = '<option value="">Selecione um Estado primeiro</option>';
+  }
+
+  async function onEstadoChange(){
+    const uf = estadoSel.value;
+    grid.innerHTML = '';
+    count.textContent = '0';
+    cidadeSel.innerHTML = '<option value="">Carregando cidades...</option>';
+    if(!uf){ cidadeSel.innerHTML = '<option value="">Selecione um Estado primeiro</option>'; return; }
+
+    const arr = await loadUF(uf);
+    const cidades = [...new Set(arr.map(d=>d.cidade))].filter(Boolean).sort();
+    cidadeSel.innerHTML = '<option value="">Todas</option>' + cidades.map(c=>`<option value="${c}">${c}</option>`).join('');
+
+    // Render somente após escolher UF
+    viewData = arr; page = 1; render();
+  }
+
+  function onCidadeChange(){
+    const uf = estadoSel.value; if(!uf) return; // exige UF
+    const cidade = cidadeSel.value;
+    const base = cacheUF[uf]||[];
+    viewData = cidade? base.filter(x=>x.cidade===cidade) : base;
+    page = 1; render();
+  }
+
+  function render(){
+    const total = viewData.length; count.textContent = total;
+    if(total===0){ grid.innerHTML = `<div class='col-span-full text-center border border-dashed border-[#ff5100]/30 rounded-2xl p-10 text-[#ff5100]'>Selecione um Estado (e, se quiser, uma cidade) para listar resultados.</div>`; return; }
+
+    const end = Math.min(page*PAGE_SIZE, total);
+    const slice = viewData.slice(0, end);
+    grid.innerHTML = slice.map(d=>{
+      const numero = (d.whatsapp||'').length>=12 && (d.whatsapp||'').length<=14 ? d.whatsapp : '';
+      const msg = encodeURIComponent(`Olá! Vim pelo site Encontre Kidy 👟 e tenho interesse em produtos Kidy na cidade de ${d.cidade}/${d.estado}.`);
+      const href = numero ? `https://wa.me/${numero}?text=${msg}` : '#';
+      const disabled = href==='#' ? 'opacity-50 pointer-events-none' : '';
+      const nome = (d.loja && String(d.loja).trim()) ? d.loja : 'Loja / Representante';
+      const tels = [d.cel, d.tel1, d.tel2].filter(Boolean).map(fmtPhoneBR).join(' / ');
+      const email = d.email ? `<div class='text-sm muted'><span class='font-semibold'>E-mail:</span> <a class='underline' href='mailto:${d.email}'>${d.email}</a></div>` : '';
+      const cep = d.cep ? `<div class='text-sm muted'><span class='font-semibold'>CEP:</span> ${d.cep}</div>` : '';
+      const bairro = d.bairro ? `<div class='text-sm muted'><span class='font-semibold'>Bairro:</span> ${d.bairro}</div>` : '';
+      const mapa = mapsLink(d);
+      return `<article class='card rounded-2xl p-4 shadow border border-[#ff5100]/20'>
+        <div class='flex items-start justify-between'>
+          <h3 class='font-extrabold text-lg leading-tight'>${nome}</h3>
+          <span class='badge'>${d.estado||''}</span>
+        </div>
+        ${d.endereco ? `<div class='text-sm muted'><span class='font-semibold'>Endereço:</span> ${d.endereco}</div>`:''}
+        ${bairro}
+        <div class='text-sm muted'><span class='font-semibold'>Cidade/UF:</span> ${d.cidade||''}/${d.estado||''}</div>
+        ${cep}
+        ${tels? `<div class='text-sm muted'><span class='font-semibold'>Telefone(s):</span> ${tels}</div>`:''}
+        ${email}
+        <div class='flex gap-2 mt-4'>
+          <a class='btn btn-primary flex-1 ${disabled}' target='_blank' rel='noopener' href='${href}'>Falar no WhatsApp</a>
+          <a class='btn btn-map flex-1' target='_blank' rel='noopener' href='${mapa}'>Abrir no Mapa</a>
+        </div>
+      </article>`;
+    }).join('');
+
+    // Carregar mais
+    if(end < total){
+      const more = document.createElement('div');
+      more.className = 'col-span-full flex justify-center';
+      more.innerHTML = `<button id="btnMore" class="btn btn-ghost mt-2">Carregar mais (${total-end} restantes)</button>`;
+      grid.appendChild(more);
+      document.getElementById('btnMore').onclick = ()=>{ page++; render(); };
+    }
+  }
+
+  // Eventos
+  estadoSel.addEventListener('change', onEstadoChange);
+  cidadeSel.addEventListener('change', onCidadeChange);
+  document.getElementById('limpar').addEventListener('click', ()=>{ estadoSel.value=''; cidadeSel.innerHTML = '<option value="">Selecione um Estado primeiro</option>'; viewData=[]; page=1; render(); });
+
+  // Inicializa (só carrega estados, sem baixar dados)
+  function init(){
+    estadoSel.innerHTML = '<option value="">Selecione um Estado</option>' + UF_LIST.map(e=>`<option value="${e}">${e}</option>`).join('');
+    cidadeSel.innerHTML = '<option value="">Selecione um Estado primeiro</option>';
+  }
+  init();
+</script>
+</body>
+</html>
